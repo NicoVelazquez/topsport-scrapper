@@ -1,0 +1,14 @@
+/venv
+
+# compiled output
+/dist
+/build
+
+# System Files
+.DS_Store
+Thumbs.db
+.idea
+
+/__pycache__
+
+main.spec
