@@ -7,7 +7,6 @@ import os
 from bs4 import BeautifulSoup
 import requests
 import pandas as pd
-
 import xlsxwriter
 
 
@@ -43,40 +42,48 @@ def get_race_info(race_url):
     trk_cond = s.find("div", {"class": "raceHeaderTitleBar"}).find("div").text.split(':')[1].strip().split('\r')[0]
 
     horses_table = s.find("table", {"class": "MarketTable RaceMarket"})
-    horses_table_body_rows = horses_table.findAll("tr", recursive=False)
-    horses_rows_tuples = list(zip(horses_table_body_rows[::2], horses_table_body_rows[1::2]))
+    horses_rows = horses_table.findAll("tr", recursive=False)
+    if not horses_rows[1].find("td", {"class": "competitorNumColumn"}):
+        horses_rows = horses_rows[::2]
 
-    for horse in horses_rows_tuples:
+    for horse in horses_rows:
         data['Meeting'].append(meeting_name)
         data['Race'].append(int(race_number))
         data['Trk Cond'].append(trk_cond)
         get_horse_info(horse, data)
 
-    df = pd.DataFrame.from_dict(data)
+    df_r = pd.DataFrame.from_dict(data)
 
     horse_table_winners = s.find("table", {"class": "results"})
-    get_horse_winner_info(horse_table_winners, df)
+    get_horse_winner_info(horse_table_winners, df_r)
 
-    df = calculate_open_rank(df)
-    df = calculate_spr_rank(df)
-    return df
+    df_r = calculate_open_rank(df_r)
+    df_r = calculate_spr_rank(df_r)
+    return df_r
 
 
-def get_horse_info(horse_tuple, data):
-    if 'Scratched' in horse_tuple[0].findAll('td')[-1].text:
+def get_horse_info(horse_row, data):
+    if 'Scratched' in horse_row.findAll('td')[-1].text:
         data['Meeting'].pop()
         data['Race'].pop()
         data['Trk Cond'].pop()
         return
 
-    tab_number = horse_tuple[0].find("td", {"class": "competitorNumColumn"}).text.strip()
-    horse_name = horse_tuple[0].find("span", {"class": "rnnrName"}).text
-    barrier = horse_tuple[0].find("span", {"class": "rnnrBarrier"}).text[1:][:-1]
+    tab_number = horse_row.find("td", {"class": "competitorNumColumn"}).text.strip()
+    horse_name = horse_row.find("span", {"class": "rnnrName"}).text
+    barrier = horse_row.find("span", {"class": "rnnrBarrier"}).text[1:][:-1]
 
-    flucs_body = horse_tuple[1].findAll("tbody")[2]
-    open_c = flucs_body.findAll('td')[0].text
-    tfluc = flucs_body.findAll('td')[1].text
-    spr = flucs_body.findAll('td')[2].text
+    flucs = horse_row.findAll("td", {"class": "fluc"})
+    flucs = [float(x.text) for x in flucs]
+    if len(flucs) > 0:
+        open_c = flucs[0]
+        tfluc = max(flucs)
+        spr = flucs[-1]
+    else:
+        open_c = 999
+        tfluc = 999
+        spr = 999
+    #     Si me pide que lo tengo que sacar al que no tiene valores, es aca
 
     data['Horse'].append(horse_name)
     data['Tab Number'].append(tab_number)
@@ -92,7 +99,7 @@ def get_horse_info(horse_tuple, data):
     data['SPR Rank'].append(0)
 
 
-def get_horse_winner_info(table, df):
+def get_horse_winner_info(table, df_i):
     table_body = table.find("tbody")
     table_rows = table_body.findAll("tr")
 
@@ -101,21 +108,21 @@ def get_horse_winner_info(table, df):
     double_first_flag = (len(table_rows) == 5)
     triple_first_flag = (len(table_rows) == 6)
     tab_number = 0
-    for row in table_rows:
+    for t_row in table_rows:
         if not first_element_flag and not second_element_flag:
-            wpl = row.find('th').text.split(' ')[-1][0]
-            tab_number = row.find("span").text.split('.')[0]
-            df.loc[df['Tab Number'] == tab_number, 'WPL'] = float(wpl)
-            values = row.findAll("td")[-3:]
+            wpl = t_row.find('th').text.split(' ')[-1][0]
+            tab_number = t_row.find("span").text.split('.')[0]
+            df_i.loc[df_i['Tab Number'] == tab_number, 'WPL'] = float(wpl)
+            values = t_row.findAll("td")[-3:]
             plcdiv = values[-2].text
             if plcdiv not in ['ND', 'NSD', 'NTD']:
-                df.loc[df['Tab Number'] == tab_number, 'PLCDIV'] = float(plcdiv)
+                df_i.loc[df_i['Tab Number'] == tab_number, 'PLCDIV'] = float(plcdiv)
 
         if second_element_flag:
-            values = row.findAll("td")[-3:]
+            values = t_row.findAll("td")[-3:]
             plcdiv = values[-2].text
             if plcdiv not in ['ND', 'NSD', 'NTD']:
-                df.loc[df['Tab Number'] == tab_number, 'PLCDIV'] = float(plcdiv)
+                df_i.loc[df_i['Tab Number'] == tab_number, 'PLCDIV'] = float(plcdiv)
             second_element_flag = False
             if double_first_flag:
                 first_element_flag = True
@@ -127,63 +134,63 @@ def get_horse_winner_info(table, df):
                 continue
 
         if first_element_flag:
-            wpl = row.find('th').text.split(' ')[-1][0]
-            tab_number = row.find("strong").text.split('.')[0]
-            df.loc[df['Tab Number'] == tab_number, 'WPL'] = float(wpl)
-            values = row.findAll("td")[-3:]
+            wpl = t_row.find('th').text.split(' ')[-1][0]
+            tab_number = t_row.find("strong").text.split('.')[0]
+            df_i.loc[df_i['Tab Number'] == tab_number, 'WPL'] = float(wpl)
+            values = t_row.findAll("td")[-3:]
             bo3 = 0
             for v in values:
                 if bo3 < float(v.text):
                     bo3 = float(v.text)
-            df.loc[df['Tab Number'] == tab_number, 'BO3'] = float(bo3)
+            df_i.loc[df_i['Tab Number'] == tab_number, 'BO3'] = float(bo3)
             stab = values[-2].text
-            df.loc[df['Tab Number'] == tab_number, 'STAB'] = float(stab)
+            df_i.loc[df_i['Tab Number'] == tab_number, 'STAB'] = float(stab)
             first_element_flag = False
             second_element_flag = True
 
 
-def calculate_open_rank(df):
+def calculate_open_rank(df_o):
     counter = 1
     convert_dict = {'Tab Number': int, 'Open': float, 'Open Rank': float}
-    df = df.astype(convert_dict)
+    df_o = df_o.astype(convert_dict)
 
-    df = df.sort_values('Open')
-    df = df.reset_index(drop=True)
+    df_o = df_o.sort_values('Open')
+    df_o = df_o.reset_index(drop=True)
 
-    for index, row in df.iterrows():
-        df.at[index, 'Open Rank'] = counter
+    for index, row_o in df_o.iterrows():
+        df_o.at[index, 'Open Rank'] = counter
         if counter > 1:
-            if df.at[index - 1, 'Open'] == df.at[index, 'Open']:
-                if math.modf(df.at[index - 1, 'Open Rank'])[0] == 0:
-                    df.at[index - 1, 'Open Rank'] = df.at[index - 1, 'Open Rank'] + 0.5
-                df.at[index, 'Open Rank'] = df.at[index - 1, 'Open Rank']
+            if df_o.at[index - 1, 'Open'] == df_o.at[index, 'Open']:
+                if math.modf(df_o.at[index - 1, 'Open Rank'])[0] == 0:
+                    df_o.at[index - 1, 'Open Rank'] = df_o.at[index - 1, 'Open Rank'] + 0.5
+                df_o.at[index, 'Open Rank'] = df_o.at[index - 1, 'Open Rank']
 
         counter = counter + 1
 
-    df = df.sort_values('Tab Number')
-    return df
+    df_o = df_o.sort_values('Tab Number')
+    return df_o
 
 
-def calculate_spr_rank(df):
+def calculate_spr_rank(df_s):
     counter = 1
     convert_dict = {'Tab Number': int, 'SPR': float, 'SPR Rank': float}
-    df = df.astype(convert_dict)
+    df_s = df_s.astype(convert_dict)
 
-    df = df.sort_values('SPR')
-    df = df.reset_index(drop=True)
+    df_s = df_s.sort_values('SPR')
+    df_s = df_s.reset_index(drop=True)
 
-    for index, row in df.iterrows():
-        df.at[index, 'SPR Rank'] = counter
+    for index, row_s in df_s.iterrows():
+        df_s.at[index, 'SPR Rank'] = counter
         if counter > 1:
-            if df.at[index - 1, 'SPR'] == df.at[index, 'SPR']:
-                if math.modf(df.at[index - 1, 'SPR Rank'])[0] == 0:
-                    df.at[index - 1, 'SPR Rank'] = df.at[index - 1, 'SPR Rank'] + 0.5
-                df.at[index, 'SPR Rank'] = df.at[index - 1, 'SPR Rank']
+            if df_s.at[index - 1, 'SPR'] == df_s.at[index, 'SPR']:
+                if math.modf(df_s.at[index - 1, 'SPR Rank'])[0] == 0:
+                    df_s.at[index - 1, 'SPR Rank'] = df_s.at[index - 1, 'SPR Rank'] + 0.5
+                df_s.at[index, 'SPR Rank'] = df_s.at[index - 1, 'SPR Rank']
 
         counter = counter + 1
 
-    df = df.sort_values('Tab Number')
-    return df
+    df_s = df_s.sort_values('Tab Number')
+    return df_s
 
 
 if __name__ == "__main__":
@@ -202,6 +209,9 @@ if __name__ == "__main__":
     meetings_rows = get_meetings_rows(url)
     for row in meetings_rows:
         races_urls = get_races_urls(row)
+        for race_url in races_urls:
+            df = get_race_info(race_url)
+            final_df = final_df.append(df)
 
         # pool = Pool(12)
         # p = pool.map(get_race_info, races_urls)
@@ -209,11 +219,7 @@ if __name__ == "__main__":
         #     final_df = final_df.append(df)
         # pool.terminate()
         # pool.join()
-
-        for race_url in races_urls:
-            df = get_race_info(race_url)
-            final_df = final_df.append(df)
-    # df = get_race_info('https://www.topsport.com.au/Racing/Thoroughbreds/Eagle_Farm/R7/22491423')   #Test
+    # df = get_race_info('https://www.topsport.com.au/Racing/Thoroughbreds/Hobart/R10/22500396')   #Test
     # final_df = final_df.append(df)      #Test
 
     end = time.time()
@@ -221,15 +227,9 @@ if __name__ == "__main__":
     print('Finished scrapping')
 
     print('Generating excel')
-    # To add this again, change the append from '' to 0
-    # format_mapping = {'BO3': '${:,.2f}', 'STAB': '${:,.2f}', 'PLCDIV': '${:,.2f}', 'Open': '${:,.2f}',
-    #                   'TFLUC': '${:,.2f}', 'SPR': '${:,.2f}'}
-    # for key, value in format_mapping.items():
-    #     final_df[key] = final_df[key].apply(value.format)
-    # final_df = final_df.replace('$0.00', '')
 
     path = os.getcwd()
-    writer = pd.ExcelWriter(path + '/' + input_url + ' TS2' + '.xlsx', engine='xlsxwriter')
+    writer = pd.ExcelWriter(path + '/' + input_url + ' TS' + '.xlsx', engine='xlsxwriter')
     final_df.to_excel(writer, sheet_name='Sheet1', index=False)
     workbook = writer.book
     worksheet = writer.sheets['Sheet1']
