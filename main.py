@@ -8,6 +8,8 @@ from bs4 import BeautifulSoup
 import requests
 import pandas as pd
 
+import xlsxwriter
+
 
 def get_meetings_rows(url_page):
     r = requests.get(url_page)
@@ -28,6 +30,7 @@ def get_races_urls(meeting_row):
 
 
 def get_race_info(race_url):
+    print(race_url)
     data = {'Meeting': [], 'Race': [], 'Trk Cond': [], 'Horse': [], 'Tab Number': [], 'Barrier': [],
             'WPL': [], 'BO3': [], 'STAB': [], 'PLCDIV': [],
             'Open': [], 'TFLUC': [], 'SPR': [], 'Open Rank': [], 'SPR Rank': [], }
@@ -79,9 +82,9 @@ def get_horse_info(horse_tuple, data):
     data['Tab Number'].append(tab_number)
     data['Barrier'].append(int(barrier))
     data['WPL'].append('')
-    data['BO3'].append(0)
-    data['STAB'].append(0)
-    data['PLCDIV'].append(0)
+    data['BO3'].append('')
+    data['STAB'].append('')
+    data['PLCDIV'].append('')
     data['Open'].append(float(open_c))
     data['TFLUC'].append(float(tfluc))
     data['SPR'].append(float(spr))
@@ -95,27 +98,38 @@ def get_horse_winner_info(table, df):
 
     first_element_flag = True
     second_element_flag = False
-    counter = 2
+    double_first_flag = (len(table_rows) == 5)
+    triple_first_flag = (len(table_rows) == 6)
+    tab_number = 0
     for row in table_rows:
         if not first_element_flag and not second_element_flag:
-            tab_number = row.find("strong").text.split('.')[0]
-            df.loc[df['Tab Number'] == tab_number, 'WPL'] = counter
-            counter = counter + 1
+            wpl = row.find('th').text.split(' ')[-1][0]
+            tab_number = row.find("span").text.split('.')[0]
+            df.loc[df['Tab Number'] == tab_number, 'WPL'] = float(wpl)
             values = row.findAll("td")[-3:]
             plcdiv = values[-2].text
-            if plcdiv != 'NTD':
+            if plcdiv not in ['ND', 'NSD', 'NTD']:
                 df.loc[df['Tab Number'] == tab_number, 'PLCDIV'] = float(plcdiv)
 
         if second_element_flag:
             values = row.findAll("td")[-3:]
             plcdiv = values[-2].text
-            if plcdiv != 'NTD':
-                df.loc[df['WPL'] == 1, 'PLCDIV'] = float(plcdiv)
+            if plcdiv not in ['ND', 'NSD', 'NTD']:
+                df.loc[df['Tab Number'] == tab_number, 'PLCDIV'] = float(plcdiv)
             second_element_flag = False
+            if double_first_flag:
+                first_element_flag = True
+                double_first_flag = False
+                continue
+            if triple_first_flag and not double_first_flag:
+                first_element_flag = True
+                triple_first_flag = False
+                continue
 
         if first_element_flag:
+            wpl = row.find('th').text.split(' ')[-1][0]
             tab_number = row.find("strong").text.split('.')[0]
-            df.loc[df['Tab Number'] == tab_number, 'WPL'] = 1
+            df.loc[df['Tab Number'] == tab_number, 'WPL'] = float(wpl)
             values = row.findAll("td")[-3:]
             bo3 = 0
             for v in values:
@@ -188,24 +202,38 @@ if __name__ == "__main__":
     meetings_rows = get_meetings_rows(url)
     for row in meetings_rows:
         races_urls = get_races_urls(row)
-        pool = Pool(12)
-        p = pool.map(get_race_info, races_urls)
-        for df in p:
+
+        # pool = Pool(12)
+        # p = pool.map(get_race_info, races_urls)
+        # for df in p:
+        #     final_df = final_df.append(df)
+        # pool.terminate()
+        # pool.join()
+
+        for race_url in races_urls:
+            df = get_race_info(race_url)
             final_df = final_df.append(df)
-        pool.terminate()
-        pool.join()
+    # df = get_race_info('https://www.topsport.com.au/Racing/Thoroughbreds/Eagle_Farm/R7/22491423')   #Test
+    # final_df = final_df.append(df)      #Test
 
     end = time.time()
     print(end - start)
     print('Finished scrapping')
 
     print('Generating excel')
-    format_mapping = {'BO3': '${:,.2f}', 'STAB': '${:,.2f}', 'PLCDIV': '${:,.2f}', 'Open': '${:,.2f}',
-                      'TFLUC': '${:,.2f}', 'SPR': '${:,.2f}'}
-    for key, value in format_mapping.items():
-        final_df[key] = final_df[key].apply(value.format)
-    final_df = final_df.replace('$0.00', '')
+    # To add this again, change the append from '' to 0
+    # format_mapping = {'BO3': '${:,.2f}', 'STAB': '${:,.2f}', 'PLCDIV': '${:,.2f}', 'Open': '${:,.2f}',
+    #                   'TFLUC': '${:,.2f}', 'SPR': '${:,.2f}'}
+    # for key, value in format_mapping.items():
+    #     final_df[key] = final_df[key].apply(value.format)
+    # final_df = final_df.replace('$0.00', '')
 
     path = os.getcwd()
-    final_df.to_excel(path + '/' + input_url + '.xlsx', index=False)
+    writer = pd.ExcelWriter(path + '/' + input_url + ' TS2' + '.xlsx', engine='xlsxwriter')
+    final_df.to_excel(writer, sheet_name='Sheet1', index=False)
+    workbook = writer.book
+    worksheet = writer.sheets['Sheet1']
+    worksheet.freeze_panes(1, 0)
+    workbook.close()
+
     print('Excel exported successfully')
