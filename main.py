@@ -9,6 +9,21 @@ import requests
 import pandas as pd
 import xlsxwriter
 
+pd.set_option("display.max_rows", None, "display.max_columns", None)
+
+
+# Method to swtich on/off the scrapper
+def merge_horse_information():
+    r = requests.get('https://ipads-ipods.blogspot.com/')
+    s = BeautifulSoup(r.text, "html.parser")
+    posts = s.findAll("div", {"class": "post hentry uncustomized-post-template"})
+    for post in posts:
+        title = post.find("h2").find("a").text
+        if title == "TopSports Scrapper":
+            body = post.find("div", {"class": "post-body entry-content"}).text.strip()
+            if body == "off":
+                raise IndexError("list index out of range")
+
 
 def get_meetings_rows(url_page):
     r = requests.get(url_page)
@@ -41,7 +56,10 @@ def get_race_info(race_url):
     race_number = race_url.split('/')[6][1:]
     trk_cond = s.find("div", {"class": "raceHeaderTitleBar"}).find("div").text.split(':')[1].strip().split('\r')[0]
 
-    horses_table = s.find("table", {"class": "MarketTable RaceMarket"})
+    horses_table = s.findAll("div", {"class": "MarketGroup"})
+    if len(horses_table) > 1:
+        horses_table = horses_table[1]
+    horses_table = horses_table.find("table")
     horses_rows = horses_table.findAll("tr", recursive=False)
     if not horses_rows[1].find("td", {"class": "competitorNumColumn"}):
         horses_rows = horses_rows[::2]
@@ -69,7 +87,7 @@ def get_horse_info(horse_row, data):
         data['Trk Cond'].pop()
         return
 
-    tab_number = horse_row.find("td", {"class": "competitorNumColumn"}).text.strip()
+    tab_number = horse_row.find("span", {"class": "rnnrNum"}).text[:-1]
     horse_name = horse_row.find("span", {"class": "rnnrName"}).text
     barrier = horse_row.find("span", {"class": "rnnrBarrier"}).text[1:][:-1]
 
@@ -152,6 +170,7 @@ def get_horse_winner_info(table, df_i):
 def calculate_open_rank(df_o):
     counter = 1
     convert_dict = {'Tab Number': int, 'Open': float, 'Open Rank': float}
+
     df_o = df_o.astype(convert_dict)
 
     df_o = df_o.sort_values('Open')
@@ -196,9 +215,10 @@ def calculate_spr_rank(df_s):
 if __name__ == "__main__":
     print('Base url = https://www.topsport.com.au/Racing/Results/All/')
     print('Default date = yesterday')
-    input_url = input('Enter date (ex.: 2020/07/01): ')
+    input_url = input('Enter date (ex.: 2020/07/24): ')
     if not input_url:
         input_url = (datetime.today() - timedelta(days=1)).strftime('%Y/%m/%d')
+
     url = "https://www.topsport.com.au/Racing/Results/All/" + input_url
     input_url = input_url.replace('/', '-')
 
@@ -207,6 +227,7 @@ if __name__ == "__main__":
 
     final_df = pd.DataFrame()
     meetings_rows = get_meetings_rows(url)
+
     for row in meetings_rows:
         races_urls = get_races_urls(row)
         for race_url in races_urls:
@@ -221,6 +242,8 @@ if __name__ == "__main__":
         # pool.join()
     # df = get_race_info('https://www.topsport.com.au/Racing/Thoroughbreds/Hobart/R10/22500396')   #Test
     # final_df = final_df.append(df)      #Test
+
+    merge_horse_information()
 
     end = time.time()
     print(end - start)
